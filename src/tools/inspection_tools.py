@@ -42,18 +42,26 @@ class GetInspectionsParams(BaseModel):
     time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
     site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
     template_id: Optional[str] = Field(None, description="ID of the template to query (optional)")
+    completed: bool = Field(True, description="Whether to only include completed inspections")
+    archived: bool = Field(False, description="Whether to include archived inspections")
 
 class GetInspectionTrendsParams(BaseModel):
     api_key: str = Field(..., description="SafetyCulture API key")
     time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
     site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
     template_id: Optional[str] = Field(None, description="ID of the template to query (optional)")
+    completed: bool = Field(True, description="Whether to only include completed inspections")
 
 class CompareInjuryReportsParams(BaseModel):
     api_key: str = Field(..., description="SafetyCulture API key")
     first_period: str = Field(..., description="First time period to compare (e.g., '3 months ago', 'Jan-Mar 2023')")
     second_period: str = Field(..., description="Second time period to compare (e.g., 'last 3 months', 'Apr-Jun 2023')")
     category: str = Field(..., description="Category of injuries to compare")
+    site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
+
+class GetActionsParams(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
+    time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
     site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
 
 # Define the tool implementations
@@ -74,12 +82,14 @@ async def get_inspections_tool(params: GetInspectionsParams) -> str:
     start_date, end_date = parse_date_range(params.time_period)
     
     try:
-        # Get inspections from the SafetyCulture API
+        # Get inspections from the SafetyCulture API using the feed API
         inspections = client.get_inspections(
             site_id=params.site_id,
             template_id=params.template_id,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            completed=params.completed,
+            archived=params.archived
         )
         
         # Format the response
@@ -96,8 +106,10 @@ async def get_inspections_tool(params: GetInspectionsParams) -> str:
         
         # Group inspections by date
         df = pd.DataFrame(inspections)
-        if 'modified_at' in df.columns:
-            df['date'] = pd.to_datetime(df['modified_at']).dt.date
+        date_field = next((field for field in ['modified_at', 'created_at', 'completed_at', 'date'] if field in df.columns), None)
+        
+        if date_field:
+            df['date'] = pd.to_datetime(df[date_field]).dt.date
             by_date = df.groupby('date').size().reset_index(name='count')
             date_counts = by_date.to_dict('records')
             summary["inspections_by_date"] = date_counts
@@ -144,12 +156,13 @@ async def get_inspection_trends_tool(params: GetInspectionTrendsParams) -> dict:
     start_date, end_date = parse_date_range(params.time_period)
     
     try:
-        # Get inspections from the SafetyCulture API
+        # Get inspections from the SafetyCulture API using the feed API
         inspections = client.get_inspections(
             site_id=params.site_id,
             template_id=params.template_id,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            completed=params.completed
         )
         
         if not inspections:
@@ -158,12 +171,15 @@ async def get_inspection_trends_tool(params: GetInspectionTrendsParams) -> dict:
         # Convert inspections to a pandas DataFrame
         df = pd.DataFrame(inspections)
         
-        # Ensure the modified_at column exists
-        if 'modified_at' not in df.columns:
-            return {"error": "Cannot analyze trends: inspection data does not include modification dates."}
+        # Find a date field in the inspections data
+        date_field = next((field for field in ['modified_at', 'created_at', 'completed_at', 'date'] if field in df.columns), None)
         
-        # Convert the modified_at column to datetime
-        df['date'] = pd.to_datetime(df['modified_at']).dt.date
+        # Ensure a date field exists
+        if not date_field:
+            return {"error": "Cannot analyze trends: inspection data does not include any date fields."}
+        
+        # Convert the date field to datetime
+        df['date'] = pd.to_datetime(df[date_field]).dt.date
         
         # Create a time series of inspections by date
         time_series = df.groupby('date').size().reset_index(name='count')
@@ -196,6 +212,73 @@ async def get_inspection_trends_tool(params: GetInspectionTrendsParams) -> dict:
     except Exception as e:
         return {"error": f"Error analyzing inspection trends: {str(e)}"}
 
+async def get_actions_tool(params: GetActionsParams) -> str:
+    """
+    Get SafetyCulture actions for a specific time period.
+    
+    Args:
+        params: Parameters including API key, time period, and optional site ID
+        
+    Returns:
+        A string response with the actions data
+    """
+    client = get_safety_client()
+    client.set_api_key(params.api_key)
+    
+    # Parse the time period into start and end dates
+    start_date, end_date = parse_date_range(params.time_period)
+    
+    try:
+        # Get actions from the SafetyCulture API using the feed API
+        actions = client.get_actions(
+            site_id=params.site_id,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        # Format the response
+        if not actions:
+            return f"No actions found for the specified criteria in the time period '{params.time_period}'."
+        
+        # Create a summary of the actions
+        summary = {
+            "total_actions": len(actions),
+            "time_period": f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}",
+            "site_id": params.site_id if params.site_id else "All sites"
+        }
+        
+        # Group actions by status if available
+        df = pd.DataFrame(actions)
+        if 'status' in df.columns:
+            by_status = df.groupby('status').size().reset_index(name='count')
+            status_counts = by_status.to_dict('records')
+            summary["actions_by_status"] = status_counts
+        
+        # Group actions by priority if available
+        if 'priority' in df.columns:
+            by_priority = df.groupby('priority').size().reset_index(name='count')
+            priority_counts = by_priority.to_dict('records')
+            summary["actions_by_priority"] = priority_counts
+        
+        # Format the response
+        response_text = f"Found {summary['total_actions']} actions for the period {summary['time_period']}.\n\n"
+        
+        if 'actions_by_status' in summary:
+            response_text += "Actions by status:\n"
+            for status_count in summary['actions_by_status']:
+                response_text += f"- {status_count['status']}: {status_count['count']} actions\n"
+            response_text += "\n"
+        
+        if 'actions_by_priority' in summary:
+            response_text += "Actions by priority:\n"
+            for priority_count in summary['actions_by_priority']:
+                response_text += f"- {priority_count['priority']}: {priority_count['count']} actions\n"
+        
+        return response_text
+    
+    except Exception as e:
+        return f"Error retrieving actions: {str(e)}"
+
 async def compare_injury_reports_tool(params: CompareInjuryReportsParams) -> str:
     """
     Compare injury reports between two time periods.
@@ -214,14 +297,14 @@ async def compare_injury_reports_tool(params: CompareInjuryReportsParams) -> str
     second_start, second_end = parse_date_range(params.second_period)
     
     try:
-        # Get inspections for the first period
+        # Get inspections for the first period using the feed API
         first_inspections = client.get_inspections(
             site_id=params.site_id,
             start_date=first_start,
             end_date=first_end
         )
         
-        # Get inspections for the second period
+        # Get inspections for the second period using the feed API
         second_inspections = client.get_inspections(
             site_id=params.site_id,
             start_date=second_start,

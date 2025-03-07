@@ -18,9 +18,11 @@ from tools.inspection_tools import (
     get_inspections_tool,
     get_inspection_trends_tool,
     compare_injury_reports_tool,
+    get_actions_tool,
     GetInspectionsParams,
     GetInspectionTrendsParams,
     CompareInjuryReportsParams,
+    GetActionsParams,
     ApiKeyParam
 )
 from safetyculture_api.client import SafetyCultureClient
@@ -31,7 +33,7 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI(
     title="SafetyCulture MCP Server",
-    description="A Model Context Protocol server for querying SafetyCulture data",
+    description="A Model Context Protocol server for querying SafetyCulture data using the feed API",
     version="0.1.0",
 )
 
@@ -56,7 +58,7 @@ async def authenticate(params: ApiKeyParam) -> str:
     try:
         safety_client.set_api_key(params.api_key)
         safety_client.test_connection()
-        return "Authentication successful! You can now query your SafetyCulture data."
+        return "Authentication successful! You can now query your SafetyCulture data using the feed API."
     except Exception as e:
         return f"Authentication failed: {str(e)}"
 
@@ -64,7 +66,7 @@ async def authenticate(params: ApiKeyParam) -> str:
 @mcp_server.tool()
 async def get_inspections(params: GetInspectionsParams) -> str:
     """
-    Get SafetyCulture inspections for a specific time period.
+    Get SafetyCulture inspections for a specific time period using the feed API.
     
     Args:
         params: Parameters including API key, time period, and optional site/template IDs
@@ -77,7 +79,7 @@ async def get_inspections(params: GetInspectionsParams) -> str:
 @mcp_server.tool()
 async def get_inspection_trends(params: GetInspectionTrendsParams) -> dict:
     """
-    Analyze trends in SafetyCulture inspections over time.
+    Analyze trends in SafetyCulture inspections over time using the feed API.
     
     Args:
         params: Parameters including API key, time period, and optional site/template IDs
@@ -90,7 +92,7 @@ async def get_inspection_trends(params: GetInspectionTrendsParams) -> dict:
 @mcp_server.tool()
 async def compare_injury_reports(params: CompareInjuryReportsParams) -> str:
     """
-    Compare injury reports between two time periods.
+    Compare injury reports between two time periods using the feed API.
     
     Args:
         params: Parameters including API key, time periods, category and optional site ID
@@ -99,6 +101,19 @@ async def compare_injury_reports(params: CompareInjuryReportsParams) -> str:
         A string response with the comparison results
     """
     return await compare_injury_reports_tool(params)
+
+@mcp_server.tool()
+async def get_actions(params: GetActionsParams) -> str:
+    """
+    Get SafetyCulture actions for a specific time period using the feed API.
+    
+    Args:
+        params: Parameters including API key, time period, and optional site ID
+        
+    Returns:
+        A string response with the actions data
+    """
+    return await get_actions_tool(params)
 
 if __name__ == "__main__":
     # Run the MCP server using stdio transport

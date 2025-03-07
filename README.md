@@ -46,11 +46,24 @@ A Model Context Protocol (MCP) server for the SafetyCulture API. This project al
 
 - `authenticate`: Authenticate with the SafetyCulture API using your API key
 
-### Inspection Data
+### Inspection Data (Using Feed API)
 
 - `get_inspections`: Get SafetyCulture inspections for a specific time period
 - `get_inspection_trends`: Analyze trends in SafetyCulture inspections over time
 - `compare_injury_reports`: Compare injury reports between two time periods
+
+### Action Data (Using Feed API)
+
+- `get_actions`: Get SafetyCulture actions for a specific time period
+
+## About the Feed API
+
+This MCP server uses the SafetyCulture Feed API, which provides a simple way to access collections of resources:
+
+- `/feed/inspections`: For listing inspections with various filter parameters
+- `/feed/actions`: For listing actions with various filter parameters
+
+The Feed API is preferred over the individual resource endpoints when you need to list multiple items.
 
 ## Development
 
