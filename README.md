@@ -14,7 +14,22 @@ A Model Context Protocol (MCP) server for the SafetyCulture API. This project al
 1. Clone this repository
 2. Install dependencies: `pip install -r requirements.txt`
 3. Copy `example.env` to `.env` and configure your SafetyCulture API key
-4. Run the server: `python src/main.py`
+4. Run the server using one of these methods:
+   - `run_server.bat` - Run the server with configuration from .env file
+   - `run_with_key.bat YOUR_API_KEY` - Run the server with the provided API key
+
+## Testing the API
+
+To test if your SafetyCulture API key works properly:
+
+```
+test_api.bat YOUR_API_KEY
+```
+
+Additional testing options:
+- `test_api.bat` - Run tests in interactive mode (prompts for API key)
+- `test_api.bat feed YOUR_API_KEY` - Test just the Feed API
+- `test_api.bat url` - Check which API URLs are accessible without authentication
 
 ## Usage with Claude for Desktop
 
