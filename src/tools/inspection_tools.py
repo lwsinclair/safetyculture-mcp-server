@@ -11,14 +11,7 @@ import matplotlib.pyplot as plt
 import io
 import base64
 from dateutil.relativedelta import relativedelta
-from mcp_python import (
-    Tool,
-    ContextAware,
-    Parameter,
-    ParameterType,
-    StringResponse,
-    BinaryResponse,
-)
+from pydantic import BaseModel, Field
 
 from safetyculture_api.client import SafetyCultureClient
 from utils.date_utils import parse_date_range
@@ -40,84 +33,65 @@ def get_safety_client():
         safety_client = SafetyCultureClient()
     return safety_client
 
-# Common parameters for tools
-api_key_param = Parameter(
-    name="api_key",
-    type=ParameterType.STRING,
-    description="SafetyCulture API key",
-    required=True
-)
+# Define parameter models for the tools
+class ApiKeyParam(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
 
-site_id_param = Parameter(
-    name="site_id",
-    type=ParameterType.STRING,
-    description="ID of the site to query (optional)",
-    required=False
-)
+class GetInspectionsParams(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
+    time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
+    site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
+    template_id: Optional[str] = Field(None, description="ID of the template to query (optional)")
 
-template_id_param = Parameter(
-    name="template_id",
-    type=ParameterType.STRING,
-    description="ID of the template to query (optional)",
-    required=False
-)
+class GetInspectionTrendsParams(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
+    time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
+    site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
+    template_id: Optional[str] = Field(None, description="ID of the template to query (optional)")
 
-time_period_param = Parameter(
-    name="time_period",
-    type=ParameterType.STRING,
-    description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')",
-    required=True
-)
+class CompareInjuryReportsParams(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
+    first_period: str = Field(..., description="First time period to compare (e.g., '3 months ago', 'Jan-Mar 2023')")
+    second_period: str = Field(..., description="Second time period to compare (e.g., 'last 3 months', 'Apr-Jun 2023')")
+    category: str = Field(..., description="Category of injuries to compare")
+    site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
 
-# Define the get_inspections tool
-@Tool(
-    name="get_inspections",
-    description="Get SafetyCulture inspections for a specific time period"
-)
-@ContextAware()
-def get_inspections_tool(
-    api_key: str = api_key_param,
-    time_period: str = time_period_param, 
-    site_id: Optional[str] = site_id_param,
-    template_id: Optional[str] = template_id_param
-) -> StringResponse:
+# Define the tool implementations
+async def get_inspections_tool(params: GetInspectionsParams) -> str:
     """
     Get SafetyCulture inspections for a specific time period.
     
     Args:
-        api_key: SafetyCulture API key
-        time_period: Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')
-        site_id: Optional ID of the site to query
-        template_id: Optional ID of the template to query
+        params: Parameters including API key, time period, and optional site/template IDs
         
     Returns:
         A string response with the inspection data
     """
     client = get_safety_client()
-    client.set_api_key(api_key)
+    client.set_api_key(params.api_key)
     
     # Parse the time period into start and end dates
-    start_date, end_date = parse_date_range(time_period)
+    start_date, end_date = parse_date_range(params.time_period)
     
     try:
         # Get inspections from the SafetyCulture API
         inspections = client.get_inspections(
-            site_id=site_id,
-            template_id=template_id,
+            site_id=params.site_id,
+            template_id=params.template_id,
             start_date=start_date,
             end_date=end_date
         )
         
         # Format the response
         if not inspections:
-            return StringResponse(f"No inspections found for the specified criteria in the time period '{time_period}'.")
+            return f"No inspections found for the specified criteria in the time period '{params.time_period}'."
         
         # Create a summary of the inspections
         summary = {
             "total_inspections": len(inspections),
             "time_period": f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}",
-            "site_id": site_id if site_id else "All sites",
-            "template_id": template_id if template_id else "All templates",
+            "site_id": params.site_id if params.site_id else "All sites",
+            "template_id": params.template_id if params.template_id else "All templates",
         }
         
         # Group inspections by date
@@ -148,59 +122,45 @@ def get_inspections_tool(
             for template_count in summary['inspections_by_template']:
                 response_text += f"- Template {template_count['template_id']}: {template_count['count']} inspections\n"
         
-        return StringResponse(response_text)
+        return response_text
     
     except Exception as e:
-        return StringResponse(f"Error retrieving inspections: {str(e)}")
+        return f"Error retrieving inspections: {str(e)}"
 
-# Define the get_inspection_trends tool
-@Tool(
-    name="get_inspection_trends",
-    description="Analyze trends in SafetyCulture inspections over time"
-)
-@ContextAware()
-def get_inspection_trends_tool(
-    api_key: str = api_key_param,
-    time_period: str = time_period_param,
-    site_id: Optional[str] = site_id_param,
-    template_id: Optional[str] = template_id_param
-) -> BinaryResponse:
+async def get_inspection_trends_tool(params: GetInspectionTrendsParams) -> dict:
     """
     Analyze trends in SafetyCulture inspections over time.
     
     Args:
-        api_key: SafetyCulture API key
-        time_period: Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')
-        site_id: Optional ID of the site to query
-        template_id: Optional ID of the template to query
+        params: Parameters including API key, time period, and optional site/template IDs
         
     Returns:
-        A binary response with a graph of inspection trends
+        A binary response with a graph of inspection trends or error message
     """
     client = get_safety_client()
-    client.set_api_key(api_key)
+    client.set_api_key(params.api_key)
     
     # Parse the time period into start and end dates
-    start_date, end_date = parse_date_range(time_period)
+    start_date, end_date = parse_date_range(params.time_period)
     
     try:
         # Get inspections from the SafetyCulture API
         inspections = client.get_inspections(
-            site_id=site_id,
-            template_id=template_id,
+            site_id=params.site_id,
+            template_id=params.template_id,
             start_date=start_date,
             end_date=end_date
         )
         
         if not inspections:
-            return StringResponse(f"No inspections found for the specified criteria in the time period '{time_period}'.")
+            return {"error": f"No inspections found for the specified criteria in the time period '{params.time_period}'."}
         
         # Convert inspections to a pandas DataFrame
         df = pd.DataFrame(inspections)
         
         # Ensure the modified_at column exists
         if 'modified_at' not in df.columns:
-            return StringResponse("Cannot analyze trends: inspection data does not include modification dates.")
+            return {"error": "Cannot analyze trends: inspection data does not include modification dates."}
         
         # Convert the modified_at column to datetime
         df['date'] = pd.to_datetime(df['modified_at']).dt.date
@@ -224,82 +184,52 @@ def get_inspection_trends_tool(
         plt.savefig(buf, format='png')
         buf.seek(0)
         
-        # Create a binary response with the plot image
-        image_data = buf.getvalue()
-        return BinaryResponse(
-            data=image_data,
-            mime_type="image/png",
-            description=f"Inspection trends from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
-        )
+        # Get the binary data as base64 for returning in the response
+        image_data = base64.b64encode(buf.getvalue()).decode('utf-8')
+        
+        return {
+            "image": image_data,
+            "mime_type": "image/png",
+            "description": f"Inspection trends from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        }
     
     except Exception as e:
-        return StringResponse(f"Error analyzing inspection trends: {str(e)}")
+        return {"error": f"Error analyzing inspection trends: {str(e)}"}
 
-# Define the compare_injury_reports tool
-@Tool(
-    name="compare_injury_reports",
-    description="Compare injury reports between two time periods"
-)
-@ContextAware()
-def compare_injury_reports_tool(
-    api_key: str = api_key_param,
-    first_period: str = Parameter(
-        name="first_period",
-        type=ParameterType.STRING,
-        description="First time period to compare (e.g., '3 months ago', 'Jan-Mar 2023')",
-        required=True
-    ),
-    second_period: str = Parameter(
-        name="second_period",
-        type=ParameterType.STRING,
-        description="Second time period to compare (e.g., 'last 3 months', 'Apr-Jun 2023')",
-        required=True
-    ),
-    category: str = Parameter(
-        name="category",
-        type=ParameterType.STRING,
-        description="Category of injuries to compare",
-        required=True
-    ),
-    site_id: Optional[str] = site_id_param
-) -> StringResponse:
+async def compare_injury_reports_tool(params: CompareInjuryReportsParams) -> str:
     """
     Compare injury reports between two time periods.
     
     Args:
-        api_key: SafetyCulture API key
-        first_period: First time period to compare
-        second_period: Second time period to compare
-        category: Category of injuries to compare
-        site_id: Optional ID of the site to query
+        params: Parameters including API key, time periods, category and optional site ID
         
     Returns:
         A string response with the comparison results
     """
     client = get_safety_client()
-    client.set_api_key(api_key)
+    client.set_api_key(params.api_key)
     
     # Parse the time periods into start and end dates
-    first_start, first_end = parse_date_range(first_period)
-    second_start, second_end = parse_date_range(second_period)
+    first_start, first_end = parse_date_range(params.first_period)
+    second_start, second_end = parse_date_range(params.second_period)
     
     try:
         # Get inspections for the first period
         first_inspections = client.get_inspections(
-            site_id=site_id,
+            site_id=params.site_id,
             start_date=first_start,
             end_date=first_end
         )
         
         # Get inspections for the second period
         second_inspections = client.get_inspections(
-            site_id=site_id,
+            site_id=params.site_id,
             start_date=second_start,
             end_date=second_end
         )
         
         if not first_inspections and not second_inspections:
-            return StringResponse(f"No inspections found for either time period with the specified criteria.")
+            return f"No inspections found for either time period with the specified criteria."
         
         # This is a simplified implementation that would need to be customized
         # to extract and analyze injury data based on the actual structure of the inspections
@@ -322,7 +252,7 @@ def compare_injury_reports_tool(
             percent_change = float('inf') if second_period_count > 0 else 0
         
         # Format the response
-        response_text = f"Comparison of {category} injury reports:\n\n"
+        response_text = f"Comparison of {params.category} injury reports:\n\n"
         response_text += f"First period ({first_start.strftime('%Y-%m-%d')} to {first_end.strftime('%Y-%m-%d')}): {first_period_count} inspections\n"
         response_text += f"Second period ({second_start.strftime('%Y-%m-%d')} to {second_end.strftime('%Y-%m-%d')}): {second_period_count} inspections\n\n"
         
@@ -338,7 +268,7 @@ def compare_injury_reports_tool(
         else:
             response_text += f"The number of inspections remained the same in both periods."
         
-        return StringResponse(response_text)
+        return response_text
     
     except Exception as e:
-        return StringResponse(f"Error comparing injury reports: {str(e)}") 
+        return f"Error comparing injury reports: {str(e)}" 

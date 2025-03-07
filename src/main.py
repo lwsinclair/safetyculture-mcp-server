@@ -8,20 +8,20 @@ It sets up the MCP server and registers the necessary tools for querying SafetyC
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from mcp_python import (
-    create_mcp_server,
-    ContextAware,
-    Tool,
-    Parameter,
-    ParameterType,
-    StringResponse,
-)
+from mcp.server import FastMCP
+from mcp import Tool
+from pydantic import BaseModel, Field
+from typing import Optional
 
 # Import custom tools and utilities
 from tools.inspection_tools import (
     get_inspections_tool,
     get_inspection_trends_tool,
     compare_injury_reports_tool,
+    GetInspectionsParams,
+    GetInspectionTrendsParams,
+    CompareInjuryReportsParams,
+    ApiKeyParam
 )
 from safetyculture_api.client import SafetyCultureClient
 
@@ -39,42 +39,73 @@ app = FastAPI(
 safety_client = SafetyCultureClient()
 
 # Create MCP server
-mcp_server = create_mcp_server(app)
-
-# Register tools with the MCP server
-mcp_server.register_tool(get_inspections_tool)
-mcp_server.register_tool(get_inspection_trends_tool)
-mcp_server.register_tool(compare_injury_reports_tool)
-
-# API key parameter - shared across tools
-api_key_param = Parameter(
-    name="api_key",
-    type=ParameterType.STRING,
-    description="SafetyCulture API key",
-    required=True
-)
+mcp_server = FastMCP("safetyculture")
 
 # Register API key authentication tool
-@mcp_server.tool("authenticate")
-@ContextAware()
-def authenticate(api_key: str = api_key_param) -> StringResponse:
+@mcp_server.tool()
+async def authenticate(params: ApiKeyParam) -> str:
     """
     Authenticate with the SafetyCulture API using an API key.
     
     Args:
-        api_key: SafetyCulture API key
+        params: Object containing the API key
         
     Returns:
         A response indicating whether authentication was successful
     """
     try:
-        safety_client.set_api_key(api_key)
+        safety_client.set_api_key(params.api_key)
         safety_client.test_connection()
-        return StringResponse("Authentication successful! You can now query your SafetyCulture data.")
+        return "Authentication successful! You can now query your SafetyCulture data."
     except Exception as e:
-        return StringResponse(f"Authentication failed: {str(e)}")
+        return f"Authentication failed: {str(e)}"
+
+# Register inspection tools
+@mcp_server.tool()
+async def get_inspections(params: GetInspectionsParams) -> str:
+    """
+    Get SafetyCulture inspections for a specific time period.
+    
+    Args:
+        params: Parameters including API key, time period, and optional site/template IDs
+        
+    Returns:
+        A string response with the inspection data
+    """
+    return await get_inspections_tool(params)
+
+@mcp_server.tool()
+async def get_inspection_trends(params: GetInspectionTrendsParams) -> dict:
+    """
+    Analyze trends in SafetyCulture inspections over time.
+    
+    Args:
+        params: Parameters including API key, time period, and optional site/template IDs
+        
+    Returns:
+        A binary response with a graph of inspection trends
+    """
+    return await get_inspection_trends_tool(params)
+
+@mcp_server.tool()
+async def compare_injury_reports(params: CompareInjuryReportsParams) -> str:
+    """
+    Compare injury reports between two time periods.
+    
+    Args:
+        params: Parameters including API key, time periods, category and optional site ID
+        
+    Returns:
+        A string response with the comparison results
+    """
+    return await compare_injury_reports_tool(params)
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True) 
+    # Run the MCP server using stdio transport
+    mcp_server.run(transport="stdio")
+    
+    # For development/debugging, you can also run with FastAPI/uvicorn:
+    # import uvicorn
+    # app.include_router(mcp_server.get_router())
+    # port = int(os.getenv("PORT", "8000"))
+    # uvicorn.run(app, host="0.0.0.0", port=port, reload=True) 
