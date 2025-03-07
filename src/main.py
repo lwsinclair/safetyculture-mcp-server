@@ -19,10 +19,12 @@ from tools.inspection_tools import (
     get_inspection_trends_tool,
     compare_injury_reports_tool,
     get_actions_tool,
+    get_action_details_tool,
     GetInspectionsParams,
     GetInspectionTrendsParams,
     CompareInjuryReportsParams,
     GetActionsParams,
+    GetActionDetailsParams,
     ApiKeyParam
 )
 from safetyculture_api.client import SafetyCultureClient
@@ -114,6 +116,19 @@ async def get_actions(params: GetActionsParams) -> str:
         A string response with the actions data
     """
     return await get_actions_tool(params)
+
+@mcp_server.tool()
+async def get_action_details(params: GetActionDetailsParams) -> str:
+    """
+    Get detailed information about a specific SafetyCulture action.
+    
+    Args:
+        params: Parameters including API key and action ID
+        
+    Returns:
+        A string response with detailed information about the action
+    """
+    return await get_action_details_tool(params)
 
 if __name__ == "__main__":
     # Run the MCP server using stdio transport

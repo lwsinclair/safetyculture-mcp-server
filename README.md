@@ -55,6 +55,10 @@ A Model Context Protocol (MCP) server for the SafetyCulture API. This project al
 ### Action Data (Using Feed API)
 
 - `get_actions`: Get SafetyCulture actions for a specific time period
+  - Filter by status (e.g., 'in_progress', 'completed', 'overdue')
+  - Filter by priority (e.g., 'low', 'medium', 'high')
+  - View detailed information about each action
+- `get_action_details`: Get detailed information about a specific action by ID
 
 ## About the Feed API
 
@@ -81,7 +85,7 @@ The Feed API is preferred over the individual resource endpoints when you need t
     │   └── client.py                # API client implementation
     ├── tools/                       # MCP tools
     │   ├── __init__.py
-    │   └── inspection_tools.py      # Inspection-related tools
+    │   └── inspection_tools.py      # Inspection and action tools
     └── utils/                       # Utility modules
         ├── __init__.py
         ├── analysis.py              # Data analysis utilities

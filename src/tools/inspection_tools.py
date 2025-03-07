@@ -1,7 +1,7 @@
 """
-Inspection Tools for SafetyCulture MCP Server
+Inspection and Action Tools for SafetyCulture MCP Server
 
-This module provides MCP tools for querying SafetyCulture inspection data.
+This module provides MCP tools for querying SafetyCulture inspection and action data.
 """
 
 import datetime
@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import io
 import base64
+import json
 from dateutil.relativedelta import relativedelta
 from pydantic import BaseModel, Field
 
@@ -63,6 +64,13 @@ class GetActionsParams(BaseModel):
     api_key: str = Field(..., description="SafetyCulture API key")
     time_period: str = Field(..., description="Time period to query (e.g., '3 months', 'last week', '2023-01-01 to 2023-03-31')")
     site_id: Optional[str] = Field(None, description="ID of the site to query (optional)")
+    status: Optional[str] = Field(None, description="Filter actions by status (e.g., 'in_progress', 'completed', 'overdue')")
+    priority: Optional[str] = Field(None, description="Filter actions by priority (e.g., 'low', 'medium', 'high')")
+    include_details: bool = Field(True, description="Whether to include detailed information about each action")
+
+class GetActionDetailsParams(BaseModel):
+    api_key: str = Field(..., description="SafetyCulture API key")
+    action_id: str = Field(..., description="ID of the action to retrieve details for")
 
 # Define the tool implementations
 async def get_inspections_tool(params: GetInspectionsParams) -> str:
@@ -247,8 +255,31 @@ async def get_actions_tool(params: GetActionsParams) -> str:
             "site_id": params.site_id if params.site_id else "All sites"
         }
         
+        # Filter actions by status if provided
+        if params.status:
+            actions = [action for action in actions if 'status' in action and action['status'].lower() == params.status.lower()]
+            summary["status_filter"] = params.status
+            summary["filtered_actions_count"] = len(actions)
+        
+        # Filter actions by priority if provided
+        if params.priority:
+            actions = [action for action in actions if 'priority' in action and action['priority'].lower() == params.priority.lower()]
+            summary["priority_filter"] = params.priority
+            summary["filtered_actions_count"] = len(actions)
+            
+        # If no actions left after filtering, return early
+        if not actions:
+            return f"No actions found matching the filters for the time period '{params.time_period}'."
+        
         # Group actions by status if available
         df = pd.DataFrame(actions)
+        
+        # Collect all possible fields for displaying
+        all_fields = set()
+        for action in actions:
+            all_fields.update(action.keys())
+        
+        # Group actions by status if available
         if 'status' in df.columns:
             by_status = df.groupby('status').size().reset_index(name='count')
             status_counts = by_status.to_dict('records')
@@ -260,8 +291,25 @@ async def get_actions_tool(params: GetActionsParams) -> str:
             priority_counts = by_priority.to_dict('records')
             summary["actions_by_priority"] = priority_counts
         
+        # Group actions by due date if available
+        date_field = next((field for field in ['due_date', 'created_at', 'modified_at'] if field in df.columns), None)
+        if date_field:
+            df[date_field] = pd.to_datetime(df[date_field])
+            df['month_year'] = df[date_field].dt.strftime('%Y-%m')
+            by_month = df.groupby('month_year').size().reset_index(name='count')
+            month_counts = by_month.to_dict('records')
+            summary["actions_by_month"] = month_counts
+        
         # Format the response
         response_text = f"Found {summary['total_actions']} actions for the period {summary['time_period']}.\n\n"
+        
+        if params.status:
+            response_text += f"Filtered by status: {params.status}\n"
+        if params.priority:
+            response_text += f"Filtered by priority: {params.priority}\n"
+        
+        if 'filtered_actions_count' in summary:
+            response_text += f"Actions after filtering: {summary['filtered_actions_count']}\n\n"
         
         if 'actions_by_status' in summary:
             response_text += "Actions by status:\n"
@@ -273,11 +321,107 @@ async def get_actions_tool(params: GetActionsParams) -> str:
             response_text += "Actions by priority:\n"
             for priority_count in summary['actions_by_priority']:
                 response_text += f"- {priority_count['priority']}: {priority_count['count']} actions\n"
+            response_text += "\n"
+        
+        if 'actions_by_month' in summary:
+            response_text += "Actions by month:\n"
+            for month_count in summary['actions_by_month']:
+                response_text += f"- {month_count['month_year']}: {month_count['count']} actions\n"
+            response_text += "\n"
+        
+        # Include detailed information about each action if requested
+        if params.include_details and actions:
+            response_text += "Action Details:\n"
+            response_text += "="*50 + "\n\n"
+            
+            # Get the most common fields across all actions
+            common_fields = ['title', 'description', 'status', 'priority', 'due_date', 
+                           'assigned_to', 'created_at', 'modified_at', 'completed_at']
+            
+            # Show up to 5 actions with details
+            for i, action in enumerate(actions[:5]):
+                response_text += f"Action {i+1}:\n"
+                
+                # Display common fields first if they exist
+                for field in common_fields:
+                    if field in action:
+                        response_text += f"  {field}: {action[field]}\n"
+                
+                # Display other fields
+                for field, value in action.items():
+                    if field not in common_fields:
+                        # Format the value for better readability
+                        if isinstance(value, dict) or isinstance(value, list):
+                            value = json.dumps(value, indent=2)
+                        response_text += f"  {field}: {value}\n"
+                
+                response_text += "\n"
+            
+            # If there are more than 5 actions, indicate that there are more
+            if len(actions) > 5:
+                response_text += f"... and {len(actions) - 5} more actions. Use filters to narrow down the results.\n"
         
         return response_text
     
     except Exception as e:
         return f"Error retrieving actions: {str(e)}"
+
+async def get_action_details_tool(params: GetActionDetailsParams) -> str:
+    """
+    Get detailed information about a specific SafetyCulture action.
+    
+    Args:
+        params: Parameters including API key and action ID
+        
+    Returns:
+        A string response with the detailed action data
+    """
+    client = get_safety_client()
+    client.set_api_key(params.api_key)
+    
+    try:
+        # First get all actions to find the specific one
+        actions = client.get_actions()
+        
+        # Find the specific action by ID
+        matching_action = None
+        for action in actions:
+            action_id = action.get('id', action.get('action_id', None))
+            if action_id and action_id == params.action_id:
+                matching_action = action
+                break
+        
+        if not matching_action:
+            return f"No action found with ID: {params.action_id}. Please check the ID and try again."
+        
+        # Format the response with all available details
+        response_text = f"Details for Action ID: {params.action_id}\n"
+        response_text += "="*50 + "\n\n"
+        
+        # Get important fields to display first
+        important_fields = ['title', 'description', 'status', 'priority', 'due_date', 
+                           'assigned_to', 'created_at', 'modified_at', 'completed_at']
+        
+        # Display important fields first
+        for field in important_fields:
+            if field in matching_action:
+                response_text += f"{field}: {matching_action[field]}\n"
+        
+        # Display all other fields
+        response_text += "\nAdditional details:\n"
+        for field, value in matching_action.items():
+            if field not in important_fields:
+                # Format complex objects for better readability
+                if isinstance(value, dict) or isinstance(value, list):
+                    formatted_value = json.dumps(value, indent=2)
+                    response_text += f"{field}:\n{formatted_value}\n"
+                else:
+                    response_text += f"{field}: {value}\n"
+        
+        return response_text
+    
+    except Exception as e:
+        return f"Error retrieving action details: {str(e)}"
 
 async def compare_injury_reports_tool(params: CompareInjuryReportsParams) -> str:
     """
