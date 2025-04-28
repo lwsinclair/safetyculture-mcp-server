@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/mseep-audited.png)](https://mseep.ai/app/zerubroberts-safetyculture-mcp-server)
+
 # SafetyCulture MCP Server
 
 A Model Context Protocol (MCP) server for the SafetyCulture API. This project allows users to ask natural language questions about their SafetyCulture data after providing an API key.
